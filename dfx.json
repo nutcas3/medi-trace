@@ -1,0 +1,13 @@
+{
+    "canisters": {
+        "medic-trace": {
+            "type": "custom",
+            "main": "src/index.ts",
+            "candid": "src/index.did",
+            "build": "npx azle medic-trace",
+            "wasm": ".azle/medic-trace/medic-trace.wasm",
+            "gzip": true
+        }
+    }
+}
+
