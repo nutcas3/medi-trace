@@ -21,3 +21,17 @@ type MedicinePayload = {
   expiry_date: string;
 };
 
+const MedicineStorage = new StableBTreeMap<string, Medicine>(0, 44, 512);
+//medicine to be loaded
+const initialLoad = 6;
+
+query
+export function getInitialMedicines(): Result<Vec<Medicine>, string> {
+    const initialMedicines = MedicineStorage.values().slice(0, initialLoad);
+    return Result.Ok(initialMedicines);
+}
+query
+export function loadMoreMedicines(offset: number, limit: number): Result<Vec<Medicine>, string> {
+    const moreMedicines = MedicineStorage.values().slice(offset, offset + limit);
+    return Result.Ok(moreMedicines);
+}
