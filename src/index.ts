@@ -12,9 +12,10 @@ type Medicine = Record<{
   assigned_to: string;
   tags: Vec<string>;
   status: string;
-  priority: string; // Added for Medicine Priority
-  comments: Vec<string>; // Added for Medicine Comments
+  priority: string;
+  comments: Vec<string>;
 }>;
+
 type MedicinePayload = Record<{
   title: string;
   description: string;
@@ -24,24 +25,20 @@ type MedicinePayload = Record<{
 
 const MedicineStorage = new StableBTreeMap<string, Medicine>(0, 44, 512);
 
-// Number of Medicines to load initially
 const initialLoadSize = 4;
 
-// Load the Initial batch of Medicines
 $query
 export function getInitialMedicines(): Result<Vec<Medicine>, string> {
   try {
     const initialMedicines = MedicineStorage.values().slice(0, initialLoadSize);
-    if (initialMedicines.length === 0) {
-      return Result.Err("No initial medicines found");
-    }
-    return Result.Ok(initialMedicines);
+    return initialMedicines.length > 0
+      ? Result.Ok(initialMedicines)
+      : Result.Err("No initial medicines found");
   } catch (error) {
     return Result.Err("Failed to fetch initial medicines");
   }
 }
 
-// Load more Medicines as the user scrolls down
 $query
 export function loadMoreMedicines(offset: number, limit: number): Result<Vec<Medicine>, string> {
   if (offset < 0 || limit < 0 || !Number.isInteger(offset) || !Number.isInteger(limit)) {
@@ -49,57 +46,49 @@ export function loadMoreMedicines(offset: number, limit: number): Result<Vec<Med
   }
 
   const allMedicines = MedicineStorage.values();
-  if (allMedicines.length === 0) {
-    return Result.Err("No more medicines to load");
-  }
-
-  if (offset >= allMedicines.length) {
-    return Result.Err("Invalid offset");
-  }
-
   const totalMedicines = allMedicines.length;
-  if (offset + limit > totalMedicines) {
-    return Result.Err("Invalid offset and limit");
+
+  if (totalMedicines === 0 || offset >= totalMedicines || offset + limit > totalMedicines) {
+    return Result.Err("Invalid offset or limit");
   }
 
   const moreMedicines = allMedicines.slice(offset, offset + limit);
   return Result.Ok(moreMedicines);
 }
 
-// Loading a Specific mdicine
 $query
 export function getMedicine(id: string): Result<Medicine, string> {
   if (!id) {
-    return Result.Err<Medicine, string>('Invalid id parameter');
+    return Result.Err('Invalid id parameter');
   }
 
-  return match(MedicineStorage.get(id), {
-    Some: (medicine) => {
-      if (medicine.creator.toString() !== ic.caller().toString()) {
-        return Result.Err<Medicine, string>('You are not authorized to access Medicine');
+  const medicine = MedicineStorage.get(id);
+
+  return match(medicine, {
+    Some: (med) => {
+      if (med.creator.toString() !== ic.caller().toString()) {
+        return Result.Err('You are not authorized to access Medicine');
       }
-      return Result.Ok<Medicine, string>(medicine);
+      return Result.Ok(med);
     },
-    None: () => Result.Err<Medicine, string>(`Medicine with id:${id} not found`),
+    None: () => Result.Err(`Medicine with id:${id} not found`),
   });
 }
 
-// Get Medicine available by Tags
 $query
 export function getMedicineByTags(tag: string): Result<Vec<Medicine>, string> {
-  const relatedMedicine = MedicineStorage.values().filter((Medicine) => Medicine.tags.includes(tag));
+  const relatedMedicine = MedicineStorage.values().filter((med) => med.tags.includes(tag));
   return Result.Ok(relatedMedicine);
 }
 
-// Search Medicine
 $query
 export function searchMedicines(searchInput: string): Result<Vec<Medicine>, string> {
   const lowerCaseSearchInput = searchInput.toLowerCase();
   try {
     const searchedMedicine = MedicineStorage.values().filter(
-      (Medicine) =>
-        Medicine.title.toLowerCase().includes(lowerCaseSearchInput) ||
-        Medicine.description.toLowerCase().includes(lowerCaseSearchInput)
+      (med) =>
+        med.title.toLowerCase().includes(lowerCaseSearchInput) ||
+        med.description.toLowerCase().includes(lowerCaseSearchInput)
     );
     return Result.Ok(searchedMedicine);
   } catch (err) {
@@ -107,35 +96,34 @@ export function searchMedicines(searchInput: string): Result<Vec<Medicine>, stri
   }
 }
 
-// Allows Assigned user to approve having completed Medicine
 $update
 export function completedMedicine(id: string): Result<Medicine, string> {
-  return match(MedicineStorage.get(id), {
-    Some: (Medicine) => {
-      if (!Medicine.assigned_to) {
-        return Result.Err<Medicine, string>('No one was assigned the Medicine');
+  const medicine = MedicineStorage.get(id);
+
+  return match(medicine, {
+    Some: (med) => {
+      if (!med.assigned_to) {
+        return Result.Err('No one was assigned the Medicine');
       }
-      const completeMedicine: Medicine = { ...Medicine, status: 'Completed' };
-      MedicineStorage.insert(Medicine.id, completeMedicine);
-      return Result.Ok<Medicine, string>(completeMedicine);
+      const completeMedicine: Medicine = { ...med, status: 'Completed' };
+      MedicineStorage.insert(med.id, completeMedicine);
+      return Result.Ok(completeMedicine);
     },
-    None: () => Result.Err<Medicine, string>(`Medicine with id:${id} not found`),
+    None: () => Result.Err(`Medicine with id:${id} not found`),
   });
 }
 
-// Allows a group/Organisation to add a Medicine
 $update
 export function addMedicine(payload: MedicinePayload): Result<Medicine, string> {
-  // Validate input data
   if (!payload.title || !payload.description || !payload.assigned_to || !payload.expiry_date) {
-    return Result.Err<Medicine, string>('Missing or invalid input data');
+    return Result.Err('Missing or invalid input data');
   }
 
-  // Validate expiry date
-  const currentDate = new Date();
-  const expiryDate = new Date(payload.expiry_date);
+  const currentDate = new Date().toISOString();
+  const expiryDate = new Date(payload.expiry_date).toISOString();
+
   if (expiryDate < currentDate) {
-    return Result.Err<Medicine, string>('Expiry date cannot be in the past');
+    return Result.Err('Expiry date cannot be in the past');
   }
 
   try {
@@ -146,189 +134,188 @@ export function addMedicine(payload: MedicinePayload): Result<Medicine, string> 
       updated_at: Opt.None,
       tags: [],
       status: 'In Progress',
-      priority: "",
+      priority: '',
       comments: [],
       title: payload.title,
       description: payload.description,
       assigned_to: payload.assigned_to,
-      expiry_date: payload.expiry_date
-
+      expiry_date: payload.expiry_date,
     };
     const insertResult = MedicineStorage.insert(newMedicine.id, newMedicine);
-    if (insertResult === undefined) {
-      return Result.Err<Medicine, string>('Failed to insert medicine into storage');
-    }
-    return Result.Ok<Medicine, string>(newMedicine);
+    return insertResult !== undefined
+      ? Result.Ok(newMedicine)
+      : Result.Err('Failed to insert medicine into storage');
   } catch (err) {
-    return Result.Err<Medicine, string>('Issue encountered when Creating Medicine');
+    return Result.Err('Issue encountered when Creating Medicine');
   }
 }
 
-// Adding Tags to the Medicine created
 $update
 export function addTags(id: string, tags: Vec<string>): Result<Medicine, string> {
-  // Validate input data
   if (!tags || tags.length === 0) {
-    return Result.Err<Medicine, string>('Invalid tags');
+    return Result.Err('Invalid tags');
   }
 
-  return match(MedicineStorage.get(id), {
-    Some: (Medicine) => {
-      if (Medicine.creator.toString() !== ic.caller().toString()) {
-        return Result.Err<Medicine, string>('You are not authorized to access Medicine');
+  const medicine = MedicineStorage.get(id);
+
+  return match(medicine, {
+    Some: (med) => {
+      if (med.creator.toString() !== ic.caller().toString()) {
+        return Result.Err('You are not authorized to access Medicine');
       }
-      const updatedMedicine: Medicine = { ...Medicine, tags: [...Medicine.tags, ...tags], updated_at: Opt.Some(ic.time()) };
-      MedicineStorage.insert(Medicine.id, updatedMedicine);
-      return Result.Ok<Medicine, string>(updatedMedicine);
+      const updatedMedicine: Medicine = {
+        ...med,
+        tags: [...med.tags, ...tags],
+        updated_at: Opt.Some(ic.time()),
+      };
+      MedicineStorage.insert(med.id, updatedMedicine);
+      return Result.Ok(updatedMedicine);
     },
-    None: () => Result.Err<Medicine, string>(`Medicine with id:${id} not found`),
+    None: () => Result.Err(`Medicine with id:${id} not found`),
   });
 }
 
-// Giving capability for the creator to be able to Modify Medicine
 $update
 export function updateMedicine(id: string, payload: MedicinePayload): Result<Medicine, string> {
-  return match(MedicineStorage.get(id), {
-    Some: (Medicine) => {
-      // Authorization Check
-      if (Medicine.creator.toString() !== ic.caller().toString()) {
-        return Result.Err<Medicine, string>('You are not authorized to access Medicine');
+  const medicine = MedicineStorage.get(id);
+
+  return match(medicine, {
+    Some: (med) => {
+      if (med.creator.toString() !== ic.caller().toString()) {
+        return Result.Err('You are not authorized to access Medicine');
       }
-      const updatedMedicine: Medicine = { ...Medicine, ...payload, updated_at: Opt.Some(ic.time()) };
-      MedicineStorage.insert(Medicine.id, updatedMedicine);
-      return Result.Ok<Medicine, string>(updatedMedicine);
+      const updatedMedicine: Medicine = { ...med, ...payload, updated_at: Opt.Some(ic.time()) };
+      MedicineStorage.insert(med.id, updatedMedicine);
+      return Result.Ok(updatedMedicine);
     },
-    None: () => Result.Err<Medicine, string>(`Medicine with id:${id} not found`),
+    None: () => Result.Err(`Medicine with id:${id} not found`),
   });
 }
 
-// Creator can Delete a Medicine
 $update
 export function deleteMedicine(id: string): Result<Medicine, string> {
-  return match(MedicineStorage.get(id), {
-    Some: (Medicine) => {
-      // Authorization Check
-      if (Medicine.creator.toString() !== ic.caller().toString()) {
-        return Result.Err<Medicine, string>('You are not authorized to access Medicine');
+  const medicine = MedicineStorage.get(id);
+
+  return match(medicine, {
+    Some: (med) => {
+      if (med.creator.toString() !== ic.caller().toString()) {
+        return Result.Err('You are not authorized to access Medicine');
       }
-      MedicineStorage.remove(id);
-      return Result.Ok<Medicine, string>(Medicine);
+      MedicineStorage.remove(id
+);
+
+      return Result.Ok(med);
     },
-    None: () => Result.Err<Medicine, string>(`Medicine with id:${id} not found, could not be deleted`),
+    None: () => Result.Err(`Medicine with id:${id} not found, could not be deleted`),
   });
 }
 
-// Assign a Medicine to a User
 $update
 export function assignMedicine(id: string, assignedTo: string): Result<Medicine, string> {
-  return match(MedicineStorage.get(id), {
-    Some: (Medicine) => {
-      if (Medicine.creator.toString() !== ic.caller().toString()) {
-        return Result.Err<Medicine, string>('You are not authorized to assign a Medicine');
+  const medicine = MedicineStorage.get(id);
+
+  return match(medicine, {
+    Some: (med) => {
+      if (med.creator.toString() !== ic.caller().toString()) {
+        return Result.Err('You are not authorized to assign a Medicine');
       }
-      const updatedMedicine: Medicine = { ...Medicine, assigned_to: assignedTo };
-      MedicineStorage.insert(Medicine.id, updatedMedicine);
-      return Result.Ok<Medicine, string>(updatedMedicine);
+      const updatedMedicine: Medicine = { ...med, assigned_to: assignedTo };
+      MedicineStorage.insert(med.id, updatedMedicine);
+      return Result.Ok(updatedMedicine);
     },
-    None: () => Result.Err<Medicine, string>(`Medicine with id:${id} not found`),
+    None: () => Result.Err(`Medicine with id:${id} not found`),
   });
 }
 
-//Change Medicine Status
 $update
 export function changeMedicineStatus(id: string, newStatus: string): Result<Medicine, string> {
-  return match(MedicineStorage.get(id), {
-    Some: (Medicine) => {
-      if (Medicine.creator.toString() !== ic.caller().toString()) {
-        return Result.Err<Medicine, string>('You are not authorized to change the Medicine status');
+  const medicine = MedicineStorage.get(id);
+
+  return match(medicine, {
+    Some: (med) => {
+      if (med.creator.toString() !== ic.caller().toString()) {
+        return Result.Err('You are not authorized to change the Medicine status');
       }
-      const updatedMedicine: Medicine = { ...Medicine, status: newStatus };
-      MedicineStorage.insert(Medicine.id, updatedMedicine);
-      return Result.Ok<Medicine, string>(updatedMedicine);
+      const updatedMedicine: Medicine = { ...med, status: newStatus };
+      MedicineStorage.insert(med.id, updatedMedicine);
+      return Result.Ok(updatedMedicine);
     },
-    None: () => Result.Err<Medicine, string>(`Medicine with id:${id} not found`),
+    None: () => Result.Err(`Medicine with id:${id} not found`),
   });
 }
 
-// Get Medicines by Status
 $query
 export function getMedicinesByStatus(status: string): Result<Vec<Medicine>, string> {
-  const MedicinesByStatus = MedicineStorage.values().filter((Medicine) => Medicine.status === status);
-  return Result.Ok(MedicinesByStatus);
+  const medicinesByStatus = MedicineStorage.values().filter((med) => med.status === status);
+  return Result.Ok(medicinesByStatus);
 }
 
-// Set Medicine Priority
 $update
 export function setMedicinePriority(id: string, priority: string): Result<Medicine, string> {
-  return match(MedicineStorage.get(id), {
-    Some: (Medicine) => {
-      if (Medicine.creator.toString() !== ic.caller().toString()) {
-        return Result.Err<Medicine, string>('You are not authorized to set Medicine priority');
+  const medicine = MedicineStorage.get(id);
+
+  return match(medicine, {
+    Some: (med) => {
+      if (med.creator.toString() !== ic.caller().toString()) {
+        return Result.Err('You are not authorized to set Medicine priority');
       }
-      const updatedMedicine: Medicine = { ...Medicine, priority };
-      MedicineStorage.insert(Medicine.id, updatedMedicine);
-      return Result.Ok<Medicine, string>(updatedMedicine);
+      const updatedMedicine: Medicine = { ...med, priority };
+      MedicineStorage.insert(med.id, updatedMedicine);
+      return Result.Ok(updatedMedicine);
     },
-    None: () => Result.Err<Medicine, string>(`Medicine with id:${id} not found`),
+    None: () => Result.Err(`Medicine with id:${id} not found`),
   });
 }
 
-// Medicine Due Date Reminder
 $update
 export function sendDueDateReminder(id: string): Result<string, string> {
   const now = new Date().toISOString();
-  return match(MedicineStorage.get(id), {
-    Some: (Medicine) => {
-      if (Medicine.expiry_date < now && Medicine.status !== 'Completed') {
-        return Result.Ok<string, string>('Medicine is overdue. Please complete it.');
+  const medicine = MedicineStorage.get(id);
+
+  return match(medicine, {
+    Some: (med) => {
+      const medExpiryDate = new Date(med.expiry_date).toISOString();
+      if (medExpiryDate < now && med.status !== 'Completed') {
+        return Result.Ok('Medicine is overdue. Please complete it.');
       } else {
-        return Result.Err<string, string>('Medicine is not overdue or already completed.');
+        return Result.Err('Medicine is not overdue or already completed.');
       }
     },
-    None: () => Result.Err<string, string>(`Medicine with id:${id} not found`),
+    None: () => Result.Err(`Medicine with id:${id} not found`),
   });
 }
 
-//Get Medicines by Creator
 $query
 export function getMedicinesByCreator(creator: Principal): Result<Vec<Medicine>, string> {
-  try {
-    const creatorMedicines = MedicineStorage.values().filter((Medicine) => Medicine.creator.toString() === creator.toString());
-    return Result.Ok(creatorMedicines);
-  } catch (error) {
-    return Result.Err(`An error occurred: ${error}`);
-  }
+  const creatorMedicines = MedicineStorage.values().filter((med) => med.creator.toString() === creator.toString());
+  return Result.Ok(creatorMedicines);
 }
 
-//Get Overdue Medicines
 $query
 export function getOverdueMedicines(): Result<Vec<Medicine>, string> {
-  try {
-    const now = new Date().toISOString();
-    const overdueMedicines = MedicineStorage.values().filter(
-      (Medicine) => Medicine.expiry_date < now && Medicine.status !== 'Completed'
-    );
-    return Result.Ok(overdueMedicines);
-  } catch (error) {
-    return Result.Err('An error occurred while getting overdue medicines.');
-  }
+  const now = new Date().toISOString();
+  const overdueMedicines = MedicineStorage.values().filter(
+    (med) => new Date(med.expiry_date).toISOString() < now && med.status !== 'Completed'
+  );
+  return Result.Ok(overdueMedicines);
 }
 
-// Medicine Comments
 $update
 export function addMedicineComment(id: string, comment: string): Result<Medicine, string> {
   if (!id || comment === null) {
-    return Result.Err<Medicine, string>(`invalid id:${id} or comment`);
+    return Result.Err(`Invalid id:${id} or comment`);
   }
 
-  return match(MedicineStorage.get(id), {
-    Some: (Medicine) => {
-      const updatedComments = [...Medicine.comments, comment];
-      const updatedMedicine: Medicine = { ...Medicine, comments: updatedComments };
-      MedicineStorage.insert(Medicine.id, updatedMedicine);
-      return Result.Ok<Medicine, string>(updatedMedicine);
+  const medicine = MedicineStorage.get(id);
+
+  return match(medicine, {
+    Some: (med) => {
+      const updatedComments = [...med.comments, comment];
+      const updatedMedicine: Medicine = { ...med, comments: updatedComments };
+      MedicineStorage.insert(med.id, updatedMedicine);
+      return Result.Ok(updatedMedicine);
     },
-    None: () => Result.Err<Medicine, string>(`Medicine with id:${id} not found`),
+    None: () => Result.Err(`Medicine with id:${id} not found`),
   });
 }
 
@@ -345,3 +332,4 @@ globalThis.crypto = {
     return array;
   },
 };
+```
